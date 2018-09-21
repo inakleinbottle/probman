@@ -21,7 +21,7 @@ def main():
               help=('Include a file in for compilation'))
 #@click.option('-t', '--template', type=click.File())
 @click.argument('problemdb', type=click.File('r'))
-@click.argument('sheetfile', type=click.File('r'))
+@click.argument('sheetfile', type=click.Path('r'))
 @click.argument('template', type=click.File('r'))
 def compile(problemdb, sheetfile, template, include):
     '''Compile the sheets specified in a sheet specification file.

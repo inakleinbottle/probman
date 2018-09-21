@@ -40,6 +40,8 @@ class Problem:
         self.write_answer_file(path)
 
 
+
+
 class Sheet:
 
     def __init__(self, file_name, sheet_type, metadata, problems, formatters):
@@ -50,13 +52,18 @@ class Sheet:
         self.formatters = formatters
         if not 'mark' in self.formatters:
             self.formatters['mark'] = lambda x: ''
+           
+    def _format_problem(self, problem, mark):
+        text = problem.problem_text
+        if self.sheet_type and 'mark' in self.formatters:
+            text += self.formatters['mark'](mark)
+        return text
 
     def create_question_file(self, dst, template):
         logger.debug(f'Writing {self.file_name} into {dst!s}')
         with open(Path(dst) / (self.file_name + '.tex'), 'w') as f:
-            prob_text = '\n\n\n\\item '.join((prob.problem_text
-                                              + self.formatters['mark'](mk))
-                                       for prob, mk in self.problems.items())
+            prob_text = '\n\n\n\\item '.join(self._format_problem(prob, mk)
+                                             for prob, mk in self.problems.items())
             f.write(template.substitute(problems=prob_text, **self.metadata))
 
     def create_answer_file(self, dst, template):

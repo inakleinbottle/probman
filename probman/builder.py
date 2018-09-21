@@ -61,7 +61,7 @@ class Builder:
         with SheetParser(path, self.incl) as parser:
             for sh in parser.parse():
                 sh.problems = {self.db[i] : mk for i, mk in sh.problems}
-                self.problems.append(sh)
+                self.sheets.append(sh)
             #self.template = parser.template
             
         
