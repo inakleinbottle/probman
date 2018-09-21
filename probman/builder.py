@@ -9,6 +9,7 @@ from tempfile import TemporaryDirectory
 
 from .sheets import Sheet
 from .sheets import Problem
+from .parser import SheetParser
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,8 @@ class Builder:
         logger.debug(f'Initialising builder\ndatabase={db!s}')
         self.incl = list(incl)
         self.db = {item[0] : Problem(*item) for item in json.load(db)}
-        self.sheets = list(self.parse_sheet_file(sheetfile))
+        self.sheets = []
+        self.parse_sheet_file(Path(sheetfile))
         logger.debug(f'Including files: {", ".join(self.incl)}')
         self.template = template
  
@@ -54,73 +56,12 @@ class Builder:
                 sheet.compile_only(dirpath, dst)
  
  
-    def parse_sheet_file(self, fd):
+    def parse_sheet_file(self, path):
         logger.debug('Parsing sheet file')
-        is_toplevel = True
-         
-        glb_metadata = {}
- 
-        fname = None
-        metadata = None
-        problems = None
-        mark_formatter=None
-        formatters={}
-         
-        for line in fd:
-            if line.startswith('#'):
-                # skip comment lines
-                continue
-            elif not line.strip():
-                # blank lines delimit the sheets
-                if not is_toplevel:
-                    if fname:
-                        yield Sheet(fname, ftype, metadata,
-                                    {self.db[i] : mk for i, mk in problems},
-                                    formatters)
-                    is_toplevel = True
-                    fname = None
-                    metadata = None
-                    problems = None
-                # is_toplevel reset on blank line
-                continue
- 
-            if is_toplevel:
-                if '=' in line:
-                    key, value = line.split('=')
-                    key = key.strip()
-                    value = value.strip()
-                    if key == 'include':
-                        self.incl.append(value)
-                    elif key == 'template':
-                        with open(value, 'r') as f:
-                            self.template = f.read()
-                    elif key == 'mark':
-                        macro = value
-                        def mark_formatter(mk):
-                            if mk is not None:
-                                return f'\n{macro}{{{mk}}}'
-                            else:
-                                return ''
-                        formatters['mark'] = mark_formatter
-                    else:
-                        glb_metadata[key] = value
-                else:
-                    fname, ftype = line.strip().split()
-                    ftype = ftype if ftype else 'normal'
-                    is_toplevel = False
-                    metadata = {}
-                    metadata.update(glb_metadata)
-                    problems=[]
-            else:
-                k, v = line.strip().split('=')
-                if k.strip() == 'problems':
-                    problems.extend(map(mark_sep, v.strip().split(';')))
-                else:
-                    metadata[k.strip()] = v.strip()
-
-
-        else:
-            if fname:
-                yield Sheet(fname, ftype, metadata,
-                            {self.db[i] : mk for i, mk in problems},
-                            formatters)
+        with SheetParser(path, self.incl) as parser:
+            for sh in parser.parse():
+                sh.problems = {self.db[i] : mk for i, mk in sh.problems}
+                self.problems.append(sh)
+            #self.template = parser.template
+            
+        
