@@ -5,6 +5,8 @@ from collections import namedtuple
 from subprocess import run, PIPE
 
 
+from .utils import tex_compile
+
 logger = logging.getLogger(__name__)
 
 ##Requirement = namedtuple('Requirement', ('type', 'data'))
@@ -19,26 +21,6 @@ class Problem:
         self.attachments = attachments
 
 
-    def write_problem_file(self, path):
-        logger.write(f'Writing problem {self.problem_id} '
-                     f'to {path!s}')
-        p = path / self.problem_id
-        p.mkdir(parents=True, exist_ok=True)
-        p /= 'problem.tex'
-        p.write_text(self.problem_text)
-
-    def write_answer_file(self, path):
-        logger.write(f'Writing solution {self.problem_id} '
-                     f'to {path!s}')
-        p = path / self.problem_id
-        p.mkdir(parents=True, exist_ok=True)
-        p/= 'solution.tex'
-        p.write_text(self.answer_text)
-
-    def write_files(self, path):
-        self.write_problem_file(path)
-        self.write_answer_file(path)
-
 
 
 
@@ -52,7 +34,7 @@ class Sheet:
         self.formatters = formatters
         if not 'mark' in self.formatters:
             self.formatters['mark'] = lambda x: ''
-           
+
     def _format_problem(self, problem, mark):
         text = problem.problem_text
         if self.sheet_type and 'mark' in self.formatters:
@@ -91,13 +73,8 @@ class Sheet:
         if not build_path.exists():
             raise RuntimeError('File must be created in build location first')
 
-        cmd = [engine, self.file_name + '.tex']
-        ck = run(cmd, stdout=PIPE, stderr=PIPE, cwd=str(build_dir))
-        if not ck.returncode:
-            ck = run(cmd, stdout=PIPE, stderr=PIPE, cwd=str(build_dir))
+        tex_compile(build_pat)
 
         if not build_dir == output_dir:
             shutil.copy(build_dir / (self.file_name + '.pdf'),
                         output_dir / (self.file_name + '.pdf'))
-        
-                    
