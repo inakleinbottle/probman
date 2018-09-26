@@ -43,10 +43,10 @@ class Sheet:
 
     def create_question_file(self, dst, template):
         logger.debug(f'Writing {self.file_name} into {dst!s}')
-        with open(Path(dst) / (self.file_name + '.tex'), 'w') as f:
-            prob_text = '\n\n\n\\item '.join(self._format_problem(prob, mk)
-                                             for prob, mk in self.problems.items())
-            f.write(template.substitute(problems=prob_text, **self.metadata))
+        p = dst / (self.file_name + '.tex')
+        prob_text = '\n\n\n\\item '.join(self._format_problem(prob, mk)
+                                         for prob, mk in self.problems.items())
+        p.write_text(template.substitute(problems=prob_text, **self.metadata))
 
     def create_answer_file(self, dst, template):
         with open(Path(dst) / (self.file_name + '.tex'), 'w') as f:

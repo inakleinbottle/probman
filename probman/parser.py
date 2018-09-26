@@ -3,7 +3,7 @@ import logging
 import re
 from .sheets import Sheet
 
-LINERE = re.compile(r'((?P<sheet>\w+)(\s+(?P<sheet_type>\w+))?|'
+LINERE = re.compile(r'((?P<sheet>\w+)(\s+(?P<sheet_type>\w+))?\s*|'
                     r'(?P<indent>\s+)?((?P<key>\w+)\s*=\s*)?(?P<value>.+))$')
 PROBLEMRE = re.compile(r'(?P<problem_id>\w+)(\s+(?P<marks>\d+))?\s*$')
 
@@ -14,8 +14,8 @@ def default_mark_formatter(mark):
                                              if mark else " marks"}]}}'''
 
 class SheetParser:
-    
-    def __init__(self, path, include):
+
+    def __init__(self, path):
         self.path = path
         self.file = open(path, 'r')
         self.current = None
@@ -23,29 +23,32 @@ class SheetParser:
         self.formatters = dict()
         self.last_key = None
         self.lineno = 0
-        self.include = include
+        #self.include = []
         self.template = None
-        
+
     def __enter__(self):
         return self
-        
+
     def __exit__(self, *args, **kwargs):
         self.file.close()
-        
+
+    #def get_includes(self):
+    #    return self.include
+
     def get_processor(self, key):
         self.last_key = key
         return getattr(self, f'do_{key}', lambda v: v)
-    
+
     def process_kv(self, dest, key, value):
         processed = self.get_processor(key)(value)
         if processed and not key in dest:
             dest[key] = processed
-        
+
     def update_kv(self, dest, key, value):
         processed = self.get_processor(key)(value)
         if processed and key in dest:
             dest[key] += processed
-                
+
     def parse_global(self, key, value):
         if not key:
             # Error?
@@ -62,13 +65,13 @@ class SheetParser:
         else:
             logger.debug(f'Adding {value} to current metadata {key}')
             self.process_kv(self.current.metadata, key, value)
-      
+
     def parse_problem(self, problem_text):
         match = PROBLEMRE.match(problem_text)
         mark = int(match.group('marks')) if match.group('marks') else 0
         self.current.problems.append((match.group('problem_id'),
                                       mark))
-    
+
     def new_sheet(self, sheet_name, sheet_type):
         logger.debug(f'Creating new sheet with name {sheet_name}')
         metadata = dict()
@@ -80,10 +83,9 @@ class SheetParser:
         current = self.current
         self.current = Sheet(sheet_name, sheet_type, metadata, [], formatters)
         return current
-    
+
     def parse_line(self, line):
         line = line.rstrip('\n')
-        logger.debug(f'Parsing {line}')
         if line.startswith('#') or not line:
             return False
         match = LINERE.match(line)
@@ -96,8 +98,8 @@ class SheetParser:
         else:
             return self.parse_global(match.group('key'),
                                      match.group('value'))
-        
-        
+
+
     def parse(self):
         for line in self.file:
             self.lineno += 1
@@ -107,8 +109,8 @@ class SheetParser:
                 sheet = None
         if self.current:
             yield self.current
-              
-              
+
+
     # Special keys
     def do_problems(self, value):
         '''Parse a problem list and generate the problem objects.'''
@@ -118,7 +120,7 @@ class SheetParser:
             problem = problem.strip()
             if problem:
                 self.parse_problem(problem)
-            
+
     def do_mark(self, marker):
         def mark_formatter(mark):
             return f'\n{marker}{{{mark}}}' if mark else ''
@@ -128,9 +130,5 @@ class SheetParser:
         with open(self.path.with_name(value), 'r') as f:
             self.template = f.read()
 
-    def do_include(self, value):
-        self.include.append(str(self.path.with_name(value)))
-
-    
-            
-        
+    #def do_include(self, value):
+    #    self.include.append(str(self.path.with_name(value)))

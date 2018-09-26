@@ -1,0 +1,37 @@
+# Sample sheet specification files
+# Comment lines begin with a #
+#
+#
+# Global options go here. These are added to the
+# global data loaded from the configuration.
+#
+# Next options that are local to some but not all sheets.
+# For example, semester values, which can be updated later.
+# semester=Autumn
+#
+# Sheets are specified using the following format.
+# The filename of the sheet is on the first line with no
+# indentation. Sheet attributes are placed on Subsequent
+# lines, indented using spaces or tabs, though the amount
+# is not important. The attributes should match those in
+# the template. The special keyword is `problems`, which
+# should be followed by a `;` separated list of problem
+# ids to be included in the sheets.
+#
+# samplesheet
+#   section=Sample
+#   title=Sample sheet
+#   problems=Sa1;Sa2;Sa3
+#   intro=This is the introduction to the sample sheet.
+#         Multiple lines are accepted. Subsequent lines must
+#         be indented, but the amount of indentation does not
+#         matter.
+#
+# Update the semester
+# semester=Spring
+#
+# samplecwk   coursework
+#   section=Sample
+#   title=Sample Coursework
+#   problems=Sc1 10;Sc2 10;Sc3 10
+#   intro=This is the introduction to the coursework

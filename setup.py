@@ -8,8 +8,11 @@ setup(name='probman',
       version='0.1.0',
       packages=['probman'],
       entry_points={
-	'console_scripts' : ['probman=probman.cli:main']
+	     'console_scripts' : ['probman=probman.cli:main']
       },
-      install_requires=['click']
+      install_requires=['click'],
+      package_data = {'probman' : ['data/template',
+                                   'data/sheets',
+                                   'data/config'
+                                  ]}
       )
-

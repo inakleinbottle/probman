@@ -10,7 +10,7 @@ def encode(data):
     return base64.b85encode(data).decode('ascii')
 
 def decode(data):
-    return base64.b85decode(data.encode('ascii'))
+    return base64.b85decode(data)
 
 def extract_figs(path, attachments):
     for attachment in attachments:
@@ -21,9 +21,12 @@ def extract_figs(path, attachments):
 def tex_compile(file, *, engine='pdflatex', runs=2):
     wd = file.parent
     target = file.name
+    logger.info(f'Building {target} with {engine}.')
 
     for _ in range(runs):
-        ck = run([engine, target], cwd=wd, check_output=True)
+        ck = run([engine, target], cwd=wd, capture_output=True)
+        logger.debug(f'Build of {target} returned'
+                       f'with code {ck.returncode}')
         if ck.returncode:
             break
 
