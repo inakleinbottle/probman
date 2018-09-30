@@ -1,7 +1,7 @@
 
 import logging
 import re
-from .sheets import Sheet
+from .sheets import Sheet, Problem
 
 LINERE = re.compile(r'((?P<sheet>\w+)(\s+(?P<sheet_type>\w+))?\s*|'
                     r'(?P<indent>\s+)?((?P<key>\w+)\s*=\s*)?(?P<value>.+))$')
@@ -15,9 +15,10 @@ def default_mark_formatter(mark):
 
 class SheetParser:
 
-    def __init__(self, path):
-        self.path = path
-        self.file = open(path, 'r')
+    def __init__(self, path, ext):
+        self.path = path / ext
+        self.problem_dir = path / 'problems'
+        self.file = open(self.path, 'r')
         self.current = None
         self.global_metadata = dict()
         self.formatters = dict()
@@ -68,20 +69,19 @@ class SheetParser:
 
     def parse_problem(self, problem_text):
         match = PROBLEMRE.match(problem_text)
-        mark = int(match.group('marks')) if match.group('marks') else 0
-        self.current.problems.append((match.group('problem_id'),
-                                      mark))
+        mark_group = match.group('marks')
+        mark = int(mark_group) if mark_group is not None else None
+        id_ = match.group('problem_id')
+        if id_ is None:
+            raise SyntaxError(f'Invalid syntax in {problem_text}')
+        self.current.problems.append((Problem(id_, self.problem_dir / id_), mark))
 
     def new_sheet(self, sheet_name, sheet_type):
         logger.debug(f'Creating new sheet with name {sheet_name}')
         metadata = dict()
         metadata.update(self.global_metadata)
-        formatters = dict()
-        formatters.update(self.formatters)
-        if sheet_type and not 'mark' in formatters:
-            formatters['mark'] = default_mark_formatter
         current = self.current
-        self.current = Sheet(sheet_name, sheet_type, metadata, [], formatters)
+        self.current = Sheet(sheet_name, sheet_type, metadata, [])
         return current
 
     def parse_line(self, line):

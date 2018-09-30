@@ -1,18 +1,25 @@
 
 import logging
+import os
 
 from functools import wraps
+from pathlib import Path
+
 
 import click
 
 from .problemstore import ProblemStore
+from .utils import make_launcher
 
 logger = logging.getLogger()
 logging.basicConfig(level=logging.WARNING)
 
+CONTEXT_SETTINGS = dict(auto_envvar_prefix='PROBMAN')
 
-pass_prbd = click.make_pass_decorator(ProblemStore,
-                                      ensure=True)
+
+
+pass_prbd = click.make_pass_decorator(ProblemStore)
+
 
 
 def error_handling(func):
@@ -27,12 +34,16 @@ def error_handling(func):
     return wrapper
 
 
-@click.group()
-@click.option('-v', '--verbose', is_flag=True)
-def main(verbose):
+@click.group(context_settings=CONTEXT_SETTINGS)
+@click.option('-v', '--verbose', is_flag=True, envvar='VERBOSE')
+@click.pass_context
+def main(ctx, verbose):
     '''Problem manager main executable.'''
+    ctx.obj = ProblemStore()
     if verbose:
         logger.setLevel(logging.DEBUG)
+        ctx.obj.update_config(verbose=True)
+        
 
 @main.command()
 @click.argument('path', default='.', required=False,
@@ -42,37 +53,30 @@ def init(path):
     '''Make a new problemstore in the current directory.'''
     ProblemStore.create_directory(path)
 
-# @main.command()
-# @click.option('-i', '--include')
-# @pass_prbd
-# def compile(prbd, include):
-#     """Compile all sheets into the directory."""
-#     pass
-
 @main.command()
-@click.option('-i', '--include', type=click.Path(), multiple=True,
-              help=('Include a file in for compilation'))
-#@click.option('-t', '--template', type=click.File())
-#@click.argument('problemdb', type=click.File('r'))
-#@click.argument('sheetfile', type=click.Path(exists=True))
-#@click.argument('template', type=click.File('r'))
+@click.option('-m', '--mode',
+              type=click.Choice(('questions', 'solutions', 'mixed', 'both')),
+              default='questions')
+@click.argument('sheets', required=False, default='*')
 @pass_prbd
 @error_handling
-def compile(prbd, include):
+def compile(prbd, mode, sheets):
     '''Compile the sheets specified in a sheet specification file.
 
     Args
     -----
-        :problemdb: A database of problems to use to construct sheets.
-        :sheetfile: The sheet specification file.
-        :template: Template to use to build the sheets.
+        
     '''
-    #from .builder import Builder
-    #from string import Template
-    #builder = Builder(problemdb, sheetfile, include,
-    #                  Template(template.read()))
-    #builder.compile_all()
-    prbd.compile_all_sheets(include)
+    prbd.must_exist()
+    compiler = prbd.compile(mode, sheets)
+    length = next(compiler)
+    click.echo('Building sheets') 
+    if not prbd.get_from_runtime('verbose'):
+        with click.progressbar(compiler, length=length) as bar:
+            for _ in bar:
+                pass
+    else:
+        list(compiler)
 
 @main.command()
 @click.option('-p', '--problem', type=str, default=None)
@@ -82,6 +86,7 @@ def compile(prbd, include):
 @error_handling
 def new(prbd, problemid, problem, solution):
     '''Create a new problem in the directory.'''
+    prbd.must_exist()
     from .utils import parse_for_figures
     if not problem:
         problem_text = click.edit()
@@ -128,45 +133,90 @@ def new(prbd, problemid, problem, solution):
 @error_handling
 def attach(prbd, problemid, path):
     '''Attach a figure to a problem.'''
+    prbd.must_exist()
     prbd.attach_to_problem(problemid, path)
 
 
-def edit_file(ctx, param, value):
-    prbd = ProblemStore()
-    if ctx.command.name == 'sheets':
-        click.edit(filename=prbd.get_sheet_file())
-    elif ctx.command.name == 'config':
-        click.edit(filename=prbd.get_config_file())
-    elif ctx.command.name == 'template':
-        click.edit(filename=prbd.get_template_file())
-
-
 @main.command()
-@click.option('-e', '--edit', is_flag=True, is_eager=True,
-              callback=edit_file)
+@click.option('-e', '--edit', is_flag=True
+              )
 @click.argument('sheet', required=False, default=None, nargs=-1)
+@pass_prbd
 @error_handling
-def sheets(edit, sheet):
+def sheets(prbd, edit, sheet):
     """View or edit sheets."""
-    if not sheet:
-        # view or edit global sheets
-        pass
+    prbd.must_exist()
+    if edit:
+        click.edit(filename=prbd.get_sheet_file())
+    else:
+        if not sheet:
+            # view or edit global sheets
+            sheets = prbd.get_sheets('*')
+            w, h = click.get_terminal_size()
+            click.echo('{:<15}{:<11}{:<14}{}'.format('Sheet name', 
+                                                     'Sheet type', 
+                                                     'No. questions', 
+                                                     'Questions'))
+            for sheet in sheets:
+                click.echo(f'{sheet.file_name:15}'
+                           + f'{sheet.sheet_type if sheet.sheet_type else "":11}'
+                           + f'{len(sheet.problems):13} '
+                           + f'''{", ".join(p.problem_id
+                                  for p, _ in sheet.problems)}''')
+
 
 @main.command()
-@click.option('-e', '--edit', is_flag=True, is_eager=True,
-              callback=edit_file)
+@click.option('-e', '--edit', is_flag=True,
+              help='Open the specified problem/solution for editing')
+@click.option('-s', '--solution', is_flag=True,
+              help='Switch to solution mode')
+@click.argument('problem', required=False, default=None)
+@pass_prbd
 @error_handling
-def config(edit):
+def problem(prbd, edit, solution, problem):
+    """Get or edit information about a problem."""
+    prbd.must_exist()
+    if not problem:
+        click.echo("\n".join(prbd.list_problems()))
+    else:
+        problem = prbd.get_problem(problem)
+        if edit and not solution:
+            click.edit(filename=problem.question_path)
+        elif edit and solution:
+            click.edit(filename=problem.solution_path)
+        elif not edit and solution:
+            click.echo_via_pager(problem.get_solution())
+        else:
+            click.echo_via_pager(problem.get_question())
+            
+
+@main.command()
+@click.option('-e', '--edit', is_flag=True
+              )
+@click.option('--write-main-config', is_flag=True)
+@pass_prbd
+@error_handling
+def config(prbd, edit, write_main_config):
     """Edit directory config."""
-    pass
+    prbd.must_exist()
+    if edit:
+        click.edit(filename=prbd.get_config_file())
+    if write_main_config:
+        import pkgutil
+        conf = MAIN_CONFIGS
+        conf.write_bytes(pkgutil.get_data(__package__,'data/config'))
+        click.echo(f'Writing main config file to {conf!s}')
 
 @main.command()
-@click.option('-e', '--edit', is_flag=True, is_eager=True,
-              callback=edit_file)
+@click.option('-e', '--edit', is_flag=True)
+@pass_prbd
 @error_handling
-def template(edit):
+def template(prbd, edit):
     """Edit the template file."""
-    pass
+    prbd.must_exist()
+    if edit:
+        click.edit(filename=prbd.get_template_file())
+    
 
 @main.command()
 @click.argument('problem')
@@ -174,24 +224,27 @@ def template(edit):
 @error_handling
 def preview(prbd, problem):
     """Build and preview a problem."""
-    with prbd.preview_problem(problem) as pdf:
-        click.launch(pdf, wait=True)
+    prbd.must_exist()
+    try:
+        viewer = prbd.get_from_config('system', 'pdfviewer')
+        logger.debug(f'Using viewer {viewer} specified in config')
+        launcher = make_launcher(viewer)
+    except KeyError:
+        viewer=None
+    with prbd.preview(problem) as pdf:
+        if viewer:
+            launcher(str(pdf))
+        else:
+            click.launch(str(pdf), wait=True)
+            click.pause()
 
 @main.command()
-@click.argument('out', type=click.File('w'))
 @pass_prbd
-@error_handling
-def packdb(prbd, out):
-    '''Build a problem database from the problem store.'''
-    import json
-
-    json.dump(prbd.get_all_problems(), out, indent=4)
-
-
-@main.command()
-@click.argument('file', type=click.File('r'))
-@pass_prbd
-@error_handling
-def unpackdb(prbd, file):
-    """Unpack a problem database to problem store."""
-    prbd.unpack_db(file)
+def check(prbd):
+    """Check all problems for errors.
+    """
+    prbd.must_exist()
+    from .checker import Checker
+    for err in Checker(prbd):
+        click.echo(err.description)
+        
