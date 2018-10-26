@@ -10,28 +10,33 @@ from tempfile import TemporaryDirectory
 from configparser import ConfigParser
 from contextlib import contextmanager
 
-from .utils import extract_figs, encode, decode, tex_compile
+from .utils import tex_compile
 from .sheets import Problem
-from probman import MAIN_CONFIG
+from probman import MAIN_CONFIG, GLOBALS
 
 logger = logging.getLogger(__name__)
 
-def _ensure_exists(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        path = func(*args, **kwargs)
-        path.mkdir(exist_ok=True)
-        return path
-    return wrapper
+def _ensure_exists(path):
+    path.mkdir(exist_ok=True)
 
 class ProblemStore:
 
     def __init__(self):
         self.path = Path.cwd()
         self.conf_path = self.path / '.prob'
-        self.config = None
-        self.runtime = {}
-        #self.load_local_config()
+
+        globs = GLOBALS.get()
+        config = globs['config']
+        config.read([MAIN_CONFIG, self.conf_path / 'config'])
+        GLOBALS.set(globs)
+
+        # Store variables
+        for k, v in config['problemstore'].items():
+            setattr(self, k, v)
+        
+        # Path variables
+        for k, v in config['paths'].items():
+            setattr(self, k, self.path / v)
         
     def must_exist(self):
         if not self.path.exists() or not self.conf_path.exists():
@@ -66,99 +71,76 @@ class ProblemStore:
             data = pkgutil.get_data(__package__, f'data/{fname}')
             (conf_path / fname).write_bytes(data)
 
-    def update_config(self, **kwargs):
-        self.runtime.update(kwargs)
+    @classmethod
+    def from_path(cls, path):
+        from .utils import change_cwd
+        with change_cwd(path):
+            ps = cls()
+        return ps
 
-    def get_from_runtime(self, key):
-        logger.debug(f'Getting {key} from config')
-        return self.runtime.get(key, None)
-
-    def get_sheet_file(self):
-        return self.conf_path / 'sheets'
+    def sheet_file(self, *, relative=None):
+        path = self.conf_path / self.sheets
+        if relative:
+            path = path.relative_to(relative)
+        return path
 
     def get_config_file(self):
         return self.conf_path / 'config'
 
+    def get_sheet_file(self):
+        return self.conf_path / self.sheets
+
     def get_template_file(self):
-        return self.conf_path / 'template'
-    
-    @_ensure_exists
-    def get_problems_dir(self):
-        return self.path / 'problems'
+        return self.conf_path / self.template
 
-    @_ensure_exists
-    def get_sheets_dir(self):
-        return self.path / 'sheets'
-
-    @_ensure_exists
-    def get_solutions_dir(self):
-        return self.get_sheets_dir() / 'solutions'
-
-    @_ensure_exists
     def get_mixed_dir(self):
         return self.get_sheets_dir() / 'mixed'
 
     def get_dir_for_mode(self, mode):
         if mode == 'questions':
-            return self.get_sheets_dir()
+            path = self.sheets_path
         elif mode == 'solutions':
-            return self.get_solutions_dir()
+            path = self.sheet_solution_path
         elif mode == 'mixed':
-            return self.get_mixed_dir()
+            path = self.sheet_mixed_path
         else:
             logger.warning(f'Mode {mode} not recognised '
                            'defaulting to questions')
-            return self.get_sheets_dir()
+            path = self.sheets_path
+        _ensure_exists(path)
 
-    def load_local_config(self):
-        parser = ConfigParser()
-        parser.read([MAIN_CONFIG, self.get_config_file()])
-        self.config = parser
-
-    def get_from_config(self, *keys):
-        if not self.config:
-            self.load_local_config()
-        level=self.config
-        for key in keys:
-            level = level[key]
-        return level
-
-    def get_template(self):
+    def get_template(self, template):
         from jinja2 import Environment, FileSystemLoader
-        env = Environment(loader=FileSystemLoader(str(self.path / '.prob')))
-        return env.get_template('template')
+        env = Environment(loader=FileSystemLoader(str(self.conf_path)))
+        return env.get_template(template)
 
-    def get_sheets(self, pat):
+    def get_sheets(self, pats):
         from .parser import SheetParser
-        logger.debug(f'Reading sheet file, with patter {pat}')
+        logger.debug(f'Reading sheet file, with patterns {pats}')
         with SheetParser(self.path,
-                         self.get_sheet_file().relative_to(self.path)) as parser:
+                         self.sheet_file(relative=self.path)) as parser:
             sheets = [sheet for sheet in parser.parse()
-                      if fnmatch(sheet.file_name, pat)]
+                      if any(fnmatch(sheet.file_name, pat)
+                             for pat in pats)]
         return sheets
 
     def list_problems(self):
-        return [d.name for d in self.get_problems_dir().iterdir() if d.is_dir()]
+        return [d.name for d in self.problems_path.iterdir() if d.is_dir()]
        
     def get_problem(self, id_, must_exist=True):
-        problem_path = self.get_problems_dir() / id_
+        problem_path = self.problems_path / id_
         if must_exist and not problem_path.exists():
             raise RuntimeError(f'Problem {id_} does not exist')
         return Problem(id_, problem_path)
 
     def rm_problem(self, id_):
         if self.check_problem(id_):
-            shutil.rmtree(self.get_problem_path(id_))
+            shutil.rmtree(self.problems_path / id_)
 
-    def new_problem(self, id_, problem_text, answer_text, attachments,
-                    must_be_new=True):
+    def new_problem(self, id_):
         problem = self.get_problem(id_, must_exist=False)
-        if must_be_new and problem.exists():
-            raise RuntimeError(f'Cannot create problem {id_}, '
-                               'problem already exists')
-        problem.update_question_text(problem_text)
-        problem.update_answer_text(answer_text)
-        problem.add_attachments(Path(att) for att in attachments)
+        problem.create()
+        return problem
         
     def get_problem_text(self, id_):
         return self.get_problem(id_).get_question()
@@ -183,13 +165,13 @@ class ProblemStore:
         self.get_problem(id_).rm_attachment(Path(attachment).name)
 
     def get_includes(self):
-        return (self.path / '.prob' / 'include').glob('*')
+        return (self.conf_path / self.include).glob('*')
 
-    def write_and_compile(self, mode, sheets, output_to):
+    def write_and_compile(self, mode, sheets, output_to, template):
         if not sheets:
             raise ValueError('No sheets to build, aborting')
         
-        template = self.get_template()
+        use_template = self.get_template(template)
         with TemporaryDirectory() as tmp:
             dst = Path(tmp)
             
@@ -202,146 +184,62 @@ class ProblemStore:
                     yield sheet.write_and_compile(mode,
                                                   dst,
                                                   output_to,
-                                                  template)
+                                                  use_template)
                 except RuntimeError as e:
                     logger.warning(e)
+                    yield None
                 
         logger.debug(f'Deleting temporary directory {dst}')
                 
-    def compile(self, mode, pat='*'):
-        sheets = self.get_sheets(pat)
+    def compile(self, mode, pats):
+        sheets = self.get_sheets(pats)
         number = len(sheets)
-        round_one = mode
-        round_two = None
+
         if mode == 'both':
-            round_one = 'questions'
-            round_two = 'solutions'
-            number *=2
-            mode = 'questions'
+            rounds = ['questions', 'solutions']
+        else:
+            rounds = [mode]
             
-        yield number
-        yield from self.write_and_compile(mode, sheets,
-                                          self.get_dir_for_mode(round_one))
-        if round_two:
-            yield from self.write_and_compile(round_two,
-                                              sheets,
-                                              self.get_dir_for_mode(round_two))
-            
-    
+        yield number*len(rounds)
+        for rnd in rounds:
+            yield from self.write_and_compile(rnd, sheets,
+                                              self.get_dir_for_mode(rnd),
+                                              self.template)
+
     @contextmanager    
     def preview(self, id_):
         sheet = self.get_problem(id_).get_preview_sheet()
-        compiler = self.write_and_compile('mixed', [sheet], None)
+        compiler = self.write_and_compile('mixed', [sheet], None,
+                                          self.preview_template)
         # advance to yield the number of sheets == 1
         pdf = next(compiler)
+        if not pdf:
+            raise RuntimeError(f'Problem {id_} preview build failed.')
         yield pdf
         logger.debug(f'Removing preview file {pdf.name}')
-        pdf.unlink()
+        
+
+    ##### Merging stores
+
+    def merge_other(self, other, overwrite=False):
+        if isinstance(other, (str, Path)):
+            other = ProblemStore.from_path(other)
+        else:
+            raise ValueError(f'Cannot merge, {other} is not a problem store')
+        self_probs = set(self.list_problems())
+        other_probs = set(other.list_problems())
+        in_both = self_probs.intersect(other_probs)
+        in_other = other_probs.difference(self_probs)
+
+        for prb_id in in_other:
+            other.get_problem(prb_id).clone(self.get_problem_dir())
+
+        if overwrite:
+            for prb_id in in_both:
+                other.get_problem(prb_id).clone(self.get_problem_dir())
+
         
 
     
             
-    #### DEPRECATED ####
     
-    
-    
-    def check_problem(self, problem_id):
-        chk_path = self.get_problem_path(problem_id)
-        return chk_path.is_dir()
-
-    def check_problem_exists(self, id_):
-        if not self.check_problem(id_):
-            raise RuntimeError(f'Problem {id_} not found.')
-    
-    def compile_all_sheets(self, include_extra):
-
-        sheets = list(self.read_sheets_file())
-        if not sheets:
-            raise RuntimeError('No sheet specifications found')
-
-        include = list(self.get_includes())
-        logger.debug(f'Including {", ".join(map(str, include))}')
-
-        with TemporaryDirectory() as tmp:
-            logger.debug(f'Building all sheets in {tmp}.')
-            tmp = Path(tmp)
-            output_dir = self.path / 'sheets'
-            _ensure_created(output_dir)
-
-            for inc in include:
-                shutil.copy(inc, tmp / inc.name)
-
-            template = Template(self.get_template())
-
-            for sheet in sheets:
-                logger.debug(f'Preparing to build {sheet.file_name}')
-
-                to_remove = []
-                for prb in sheet.problems:
-                    to_remove.extend(self.copy_attachments(prb.problem_id, tmp))
-
-                sheet.create_question_file(tmp, template)
-
-                tex_compile(tmp / (sheet.file_name + '.tex'))
-
-                pdf_path = tmp / (sheet.file_name + '.pdf')
-
-                if not pdf_path.exists():
-                    logger.error(f'Compilation of sheet {sheet.file_name} '
-                                 'failed.')
-                else:
-                    logger.debug(f'Copying output to {output_dir!s}.')
-
-                    shutil.copy(pdf_path, output_dir / pdf_path.name)
-
-                # cleanup
-                logger.debug('Cleaning up.')
-                for rem in to_remove:
-                    rem.unlink()
-                    
-    @contextmanager
-    def preview_problem(self, id_):
-        self.check_problem_exists(id_)
-        with TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            tex_file = tmp / 'build.tex'
-            text = (self.get_problem_text(id_)
-                    + '\n\n\hrule\n\\textbf{Solution}\n'
-                    + self.get_answer_text(id_))
-            template = self.get_template()
-            fields = re.findall(r'\$(\w+)', template)
-            repl = {field : field for field in fields
-                    if not field == 'problems'}
-            repl['problems'] = text
-            tex_file.write_text(Template(template).substitute(repl))
-            self.copy_attachments(id_, tmp)
-
-            tex_compile(tex_file)
-            pdf_file = tmp / 'build.pdf'
-            if not pdf_file.exists():
-                raise RuntimeError('Compile failed')
-            #dst = self.path / (id_ + '.pdf')
-            #shutil.copy(pdf_file, dst)
-            yield str(pdf_file)
-            # remove the preview file
-            #pdf_file.unlink()   
-            
-    def add_problem(self, problem):
-        logger.debug(f'Writing problem {problem.problem_id} to store')
-        self.new_problem(problem.problem_id, problem.problem_text,
-                         problem.answer_text, [])
-        path = self.get_problem_path(problem.problem_id) / 'attach'
-        path.mkdir()
-        for fname, data in problem.attachments:
-            logger.debug(f'Unpacking {fname}')
-            (path / Path(fname).name).write_bytes(decode(data))
-
-    def add_problems(self, problems):
-        for problem in problems:
-            if self.check_problem(problem.problem_id):
-                continue
-            self.add_problem(problem)
-
-    def unpack_db(self, fd):
-        import json
-        self.add_problems(map(lambda j: Problem(*j), json.load(fd)))

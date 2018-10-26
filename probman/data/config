@@ -1,6 +1,18 @@
-[module]
-module_name=
-module_code=
-year=
-author=
-email=
+
+[problemstore]
+template=template
+preview_template=template
+sheets=sheets
+include=include
+
+[paths]
+problems_path=problems
+sheets_path=sheets
+sheet_solution_path=%(sheets_path)s/solutions
+sheet_mixed_path=%(sheets_path)s/mixed
+
+
+
+#[system]
+# select a default pdf viewer
+#viewer=evince

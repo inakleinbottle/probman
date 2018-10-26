@@ -24,6 +24,13 @@ class Problem:
     
     def exists(self):
         return self.path.exists()
+
+    def create(self):
+        if self.exists():
+            raise RuntimeError(f'Problem {self.problem_id} aleady exists')
+        self.path.mkdir()
+        self.question_path.touch()
+        self.solution_path.touch()
         
     def get_question(self):
         return self.question_path.read_text()
@@ -68,8 +75,13 @@ class Problem:
 
     def get_preview_sheet(self):
         return Sheet('preview', None, {}, [(self, None)])
-        
- 
+    
+    def clone(self, path):
+        shutil.copytree(self.path, path)
+
+
+
+
 
 
 

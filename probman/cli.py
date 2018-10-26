@@ -1,26 +1,23 @@
 
 import logging
 import os
-
+import pkgutil
 from functools import wraps
 from pathlib import Path
-
+from configparser import ConfigParser
 
 import click
 
 from .problemstore import ProblemStore
 from .utils import make_launcher
+from probman import MAIN_CONFIG, GLOBALS
 
 logger = logging.getLogger()
 logging.basicConfig(level=logging.WARNING)
 
 CONTEXT_SETTINGS = dict(auto_envvar_prefix='PROBMAN')
 
-
-
 pass_prbd = click.make_pass_decorator(ProblemStore)
-
-
 
 def error_handling(func):
     @wraps(func)
@@ -28,11 +25,9 @@ def error_handling(func):
         try:
             func(*args, **kwargs)
         except Exception as e:
-            raise
             logger.error(e)
             raise click.Abort()
     return wrapper
-
 
 @click.group(context_settings=CONTEXT_SETTINGS)
 @click.option('-v', '--verbose', is_flag=True, envvar='VERBOSE')
@@ -42,8 +37,7 @@ def main(ctx, verbose):
     ctx.obj = ProblemStore()
     if verbose:
         logger.setLevel(logging.DEBUG)
-        ctx.obj.update_config(verbose=True)
-        
+    
 
 @main.command()
 @click.argument('path', default='.', required=False,
@@ -57,7 +51,7 @@ def init(path):
 @click.option('-m', '--mode',
               type=click.Choice(('questions', 'solutions', 'mixed', 'both')),
               default='questions')
-@click.argument('sheets', required=False, default='*')
+@click.argument('sheets', required=False, nargs=-1)
 @pass_prbd
 @error_handling
 def compile(prbd, mode, sheets):
@@ -67,16 +61,16 @@ def compile(prbd, mode, sheets):
     -----
         
     '''
+    if not sheets:
+        sheets = ('*',)
     prbd.must_exist()
     compiler = prbd.compile(mode, sheets)
     length = next(compiler)
-    click.echo('Building sheets') 
-    if not prbd.get_from_runtime('verbose'):
-        with click.progressbar(compiler, length=length) as bar:
-            for _ in bar:
-                pass
-    else:
-        list(compiler)
+    click.echo('Building sheets')
+    
+    with click.progressbar(compiler, length=length) as bar:
+        for _ in bar:
+            pass
 
 @main.command()
 @click.option('-p', '--problem', type=str, default=None)
@@ -87,45 +81,17 @@ def compile(prbd, mode, sheets):
 def new(prbd, problemid, problem, solution):
     '''Create a new problem in the directory.'''
     prbd.must_exist()
+
+    blank_problem = prbd.new_problem(problemid)
+    
     from .utils import parse_for_figures
     if not problem:
-        problem_text = click.edit()
+        click.edit(blank_problem.question_path)
     else:
-        problem_text = problem
-    if not solution:
-        answer_text = ''
-        logger.warning(f'No solution text given for problem {problemid}.')
-    else:
-        answer_text = solution
-
-    fig_list = parse_for_figures(problem_text)
-    fig_list.extend(parse_for_figures(answer_text))
-
-    attachments = []
-    if fig_list:
-        header = 'probman expects the following figure files\n'
-        header += '\n'.join(f + '=' for f in fig_list)
-        filelocs = click.edit(header)
-
-        if not filelocs:
-            for fig in fig_list:
-                click.echo(f'Figure file "{fig}" not specified, '
-                           'this will need to be added later')
-        else:
-            for line in filelocs.splitlines():
-                if not '=' in line:
-                    continue
-                fig, loc = line.split('=', 1)
-                if not loc:
-                    click.echo(f'Figure file "{fig}" not specified, '
-                               'this will need to be added later')
-                attachments.append(loc)
-
-    prbd.new_problem(problemid,
-                     problem_text,
-                     answer_text,
-                     attachments)
-
+        blank_problem.update_question_text(problem)
+    if solution:
+        blank_problem.update_solution_text(solution)
+    
 @main.command()
 @click.argument('problemid')
 @click.argument('path', type=click.Path(exists=True))
@@ -135,7 +101,6 @@ def attach(prbd, problemid, path):
     '''Attach a figure to a problem.'''
     prbd.must_exist()
     prbd.attach_to_problem(problemid, path)
-
 
 @main.command()
 @click.option('-e', '--edit', is_flag=True
@@ -164,7 +129,6 @@ def sheets(prbd, edit, sheet):
                            + f'''{", ".join(p.problem_id
                                   for p, _ in sheet.problems)}''')
 
-
 @main.command()
 @click.option('-e', '--edit', is_flag=True,
               help='Open the specified problem/solution for editing')
@@ -188,7 +152,6 @@ def problem(prbd, edit, solution, problem):
             click.echo_via_pager(problem.get_solution())
         else:
             click.echo_via_pager(problem.get_question())
-            
 
 @main.command()
 @click.option('-e', '--edit', is_flag=True
@@ -203,7 +166,7 @@ def config(prbd, edit, write_main_config):
         click.edit(filename=prbd.get_config_file())
     if write_main_config:
         import pkgutil
-        conf = MAIN_CONFIGS
+        conf = MAIN_CONFIG
         conf.write_bytes(pkgutil.get_data(__package__,'data/config'))
         click.echo(f'Writing main config file to {conf!s}')
 
@@ -216,7 +179,6 @@ def template(prbd, edit):
     prbd.must_exist()
     if edit:
         click.edit(filename=prbd.get_template_file())
-    
 
 @main.command()
 @click.argument('problem')
@@ -247,4 +209,39 @@ def check(prbd):
     from .checker import Checker
     for err in Checker(prbd):
         click.echo(err.description)
+
+@main.command()
+@pass_prbd
+def open(prbd):
+    """Open the problem store directory."""
+    prbd.must_exist()
+    click.launch(str(prbd.path))
+
+@main.command()
+@click.option('-o', '--overwrite', is_flag=True)
+@click.argument('path', type=click.Path())
+@pass_prbd
+@error_handling
+def merge(prbd, overwrite, path):
+    """Merge problems from another store or archive."""
+    from .utils import check_is_archive
+    if check_is_archive(path):
+        from .utils import decompress
+        with decompress(path) as store:
+            prbd.merge_other(store, overwrite=overwrite)
+    else:
+        prbd.merge_other(path, overwrite=overwrite)
         
+@main.command()
+@click.option('-m', '--mode', type=click.Choice(('targz', 'tarxz', 'zip')))
+@click.option('-o', '--output', type=click.Path(), default=None)
+@pass_prbd
+@error_handling
+def archive(prbd, mode, output):
+    """Compress the store into an archive."""
+    from .utils import compress
+    if not output:
+        output = prbd.path / 'archive'
+    arch = compress(prbd.get_problem_dir(), output, mode)
+    click.echo(f'Archive created in {arch}')
+

@@ -4,7 +4,7 @@ import re
 from .sheets import Sheet, Problem
 
 LINERE = re.compile(r'((?P<sheet>\w+)(\s+(?P<sheet_type>\w+))?\s*|'
-                    r'(?P<indent>\s+)?((?P<key>\w+)\s*=\s*)?(?P<value>.+))$')
+                    r'(?P<indent>\s+)?((?P<key>\w+)\s*=\s*)?(?P<value>.*))$')
 PROBLEMRE = re.compile(r'(?P<problem_id>\w+)(\s+(?P<marks>\d+))?\s*$')
 
 logger = logging.getLogger(__name__)
