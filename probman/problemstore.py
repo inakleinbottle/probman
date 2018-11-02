@@ -108,6 +108,7 @@ class ProblemStore:
                            'defaulting to questions')
             path = self.sheets_path
         _ensure_exists(path)
+        return path
 
     def get_template(self, template):
         from jinja2 import Environment, FileSystemLoader
@@ -128,6 +129,8 @@ class ProblemStore:
         return [d.name for d in self.problems_path.iterdir() if d.is_dir()]
        
     def get_problem(self, id_, must_exist=True):
+        if not self.problems_path.exists():
+            self.problems_path.exists.mkdir()
         problem_path = self.problems_path / id_
         if must_exist and not problem_path.exists():
             raise RuntimeError(f'Problem {id_} does not exist')

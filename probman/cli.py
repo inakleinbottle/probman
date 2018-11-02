@@ -1,7 +1,9 @@
 
 import logging
 import os
+import sys
 import pkgutil
+import traceback
 from functools import wraps
 from pathlib import Path
 from configparser import ConfigParser
@@ -26,6 +28,7 @@ def error_handling(func):
             func(*args, **kwargs)
         except Exception as e:
             logger.error(e)
+            logger.info(traceback.print_tb(sys.exc_info()[2]))
             raise click.Abort()
     return wrapper
 
@@ -86,7 +89,7 @@ def new(prbd, problemid, problem, solution):
     
     from .utils import parse_for_figures
     if not problem:
-        click.edit(blank_problem.question_path)
+        click.edit(filename=blank_problem.question_path)
     else:
         blank_problem.update_question_text(problem)
     if solution:
@@ -188,7 +191,7 @@ def preview(prbd, problem):
     """Build and preview a problem."""
     prbd.must_exist()
     try:
-        viewer = prbd.get_from_config('system', 'pdfviewer')
+        viewer = GLOBALS.get()['config'].get('system', 'pdfviewer')
         logger.debug(f'Using viewer {viewer} specified in config')
         launcher = make_launcher(viewer)
     except KeyError:
