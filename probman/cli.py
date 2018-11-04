@@ -133,28 +133,19 @@ def sheets(prbd, edit, sheet):
                                   for p, _ in sheet.problems)}''')
 
 @main.command()
-@click.option('-e', '--edit', is_flag=True,
-              help='Open the specified problem/solution for editing')
 @click.option('-s', '--solution', is_flag=True,
               help='Switch to solution mode')
-@click.argument('problem', required=False, default=None)
+@click.argument('problem')
 @pass_prbd
 @error_handling
-def problem(prbd, edit, solution, problem):
-    """Get or edit information about a problem."""
+def edit(prbd, solution, problem):
+    """Edit a problem."""
     prbd.must_exist()
-    if not problem:
-        click.echo("\n".join(prbd.list_problems()))
+    problem = prbd.get_problem(problem)
+    if not solution:
+        click.edit(filename=problem.question_path)
     else:
-        problem = prbd.get_problem(problem)
-        if edit and not solution:
-            click.edit(filename=problem.question_path)
-        elif edit and solution:
-            click.edit(filename=problem.solution_path)
-        elif not edit and solution:
-            click.echo_via_pager(problem.get_solution())
-        else:
-            click.echo_via_pager(problem.get_question())
+        click.edit(filename=problem.solution_path)
 
 @main.command()
 @click.option('-e', '--edit', is_flag=True
