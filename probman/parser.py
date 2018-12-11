@@ -42,7 +42,7 @@ class SheetParser:
 
     def process_kv(self, dest, key, value):
         processed = self.get_processor(key)(value)
-        if processed and not key in dest:
+        if processed:
             dest[key] = processed
 
     def update_kv(self, dest, key, value):
